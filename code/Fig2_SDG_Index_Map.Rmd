@@ -1,0 +1,574 @@
+---
+title: "Untitled"
+author: "Yingjie"
+date: "6/26/2019"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+# Set up
+
+## path and packages
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+# To clear your environment 
+remove(list = ls())
+
+path <- rstudioapi::getSourceEditorContext()$path
+dir  <- dirname(rstudioapi::getSourceEditorContext()$path); dir
+setwd(dir)
+setwd('../')
+getwd()
+
+dir.fig <- './Figures'
+getwd()
+
+
+## data manipulation 
+library(readxl)
+library(XLConnect); 
+library(xlsx); 
+library(openxlsx)
+library(tidyverse)
+library(dplyr)
+
+## spatial 
+library(sf) # much faster than rgdal
+library(sp)
+library(ggsn)
+library(ggspatial)
+library(rgeos)
+library(rgdal)
+
+## plot
+library(cowplot)
+library(grid)
+library(magick)
+
+## other
+library(extrafont) ## font
+# library(export) # to easily export active R graphs in publication quality to Microsoft Office
+## https://github.com/tomwenseleers/export/issues/43
+```
+
+
+
+## font
+```{r}
+# font_import()
+
+font <- "Arial" ## "Times" 
+font_size <- 12
+
+```
+
+
+
+# Data
+
+```{r}
+
+## SDG scores for each province 
+xls <- './data/Figure 2.xlsx'
+df0 <- read_excel(path = xls, col_names = T, range = 'A1:E33') #, col_types = "numeric")
+str(df0)
+
+
+
+## - shp data
+# shp <- sf::st_read(dsn = "G:/My Drive/_paper/China_SDG/_Nature#2_20181214/shp_cn", layer = "cn_prov")
+shp <- sf::st_read(dsn = "./data/shp/CHN_mainland", layer = "China_province") #%>% st_transform(4479)
+shp <- shp[-c(33,34), c(77,123,128,131)] # remove additional cols
+str(shp)
+
+# plot(shp, axes=T)
+```
+
+
+
+## - transform the projection
+
+```{r}
+#### approach 1
+# library("rnaturalearth")
+# library("rnaturalearthdata")
+# world <- ne_countries(scale = "medium", returnclass = "sf")
+# class(world)
+# mycrs <- crs(world)
+# crs(census.shp)
+# census.shp <- st_transform(census.shp, mycrs)
+# crs(census.shp)
+
+
+#### approach 2: or this way
+# shp <- st_transform(shp, "+init=epsg:4490") ## 4490, 7408, 21453
+
+```
+
+
+
+## - score breaks, color, legend for mapping
+```{r}
+# breaks for map plots ----------------------------------------------------
+
+## 2019-11-03
+seq   <- c(40, 42.3, 43, 44,   45.4, 
+           48, 49.5, 51, 55.3, 57.5)
+# scale_fill_discrete(name = "SDG", labels = c(39, 41, 42, 43, 47, 48, 50, 52, 55, 58)) + 
+
+labels.legend <- c('  <40', '40-42', '42-43', '43-44', '44-45', 
+                   '45-48', '48-50', '50-51', '51-55', '55-58', '  >58', '  NA')
+
+```
+
+
+## - xls + shp
+```{r}
+# sequence value to class value -------------------------------------------
+
+df2 <- df0 %>% gather(key = year, value = score, 2:5) %>%
+  mutate(
+    SDG_int = 
+      ifelse(score < 40.0, '40',
+             ifelse(score < 42.3, '42',
+                    ifelse(score < 43, '43',
+                           ifelse(score < 44, '44',
+                                  ifelse(score < 45.4, '45', 
+                                         ifelse(score < 48, '48', 
+                                                ifelse(score < 49.5, '50',
+                                                       ifelse(score < 51, '51', 
+                                                              ifelse(score < 55.3, '55', 
+                                                                     ifelse(score < 57.5, '58', '>58')))))))))))
+
+df2$SDG_int[is.na(df2$SDG_int)] <- 'na'
+df3 <- df2 %>% select(-score) %>% spread(key = year, value = SDG_int)
+names(df3)
+
+names(df3) <- c("prov_en", "SDG2000", "SDG2005", "SDG2010", "SDG2015")
+df1 <- df3
+
+
+# Colour Palette; one value to one color
+pal <- c(
+  "40"  = '#a50026',  "42"  = '#d73027', 
+  '43'  = '#f46d43',  '44'  = '#fdae61',
+  '45'  = '#fee08b',  '48'  = '#ffffbf', 
+  '50'  = '#d9ef8b',  '51'  = '#a6d96a',
+  '55'  = '#66bd63',  '58'  = '#0b7845', # , 1a9850
+  '>58' = '#006837',  'na'  = 'gray60')
+
+
+# merge shp + data --------------------------------------------------------
+names(shp)
+census.shp <- merge(x = shp, y = df1, by.x='PINYIN_NAM', by.y='prov_en', all.x = T)
+str(census.shp)
+```
+
+
+## - provinces label on map
+
+```{r}
+### # choose a point on the surface of each geometry
+# ref: https://yutani.rbind.io/post/geom-sf-text-and-geom-sf-label-are-coming/
+points <- sf::st_point_on_surface(census.shp)
+# retrieve the coordinates
+coords <- as.data.frame(sf::st_coordinates(points))
+coords$NAME <- census.shp$PINYIN_NAM
+```
+
+## - Nanhai data
+```{r}
+# load Nanhai data
+load('./data/shp/easychart/Nanhai_8lines.RData')
+
+# Nanhai Region-----------------------------------
+Width  <- 9
+Height <- 9
+long_Start <- 124
+lat_Start  <- 16
+
+
+p_nanhai <- ggplot()+
+  geom_polygon(data = df_Nanhai, 
+               aes(x=long, y=lat, 
+                   group = interaction(class, group)
+                   ),
+               fill = 'white',
+               colour="black", size = 0.15)+  ## line color and size
+  ###绘制长方形方框
+  geom_rect(aes(xmin = long_Start,
+                xmax = long_Start + Width + 1,
+                ymin = lat_Start - 1,
+                ymax = lat_Start + Height),
+            fill=NA, colour ="black",size = 0.15)+
+  ###绘制长方形方框内的中国南海八段线
+  geom_line(data=df_NanHaiLine,
+            aes(x=long, y=lat, group=ID),
+            colour="black", size = 0.2) +
+  # theme_bw() +
+  theme_nothing()
+p_nanhai
+#
+```
+
+
+
+
+
+# Plot
+
+## map 2000
+
+```{r warning=FALSE}
+
+p2000 <- ggplot() + 
+  geom_sf(data = census.shp, aes(fill = SDG2000)) + theme_bw() +
+  
+  # geom_text(aes(label = id, x = Longitude, y = Latitude)) + #add labels at centroids
+  
+  # geom_text(data = coords, aes(X, Y, label = NAME), colour = "white") +
+  geom_sf_text(data = census.shp, aes(label = PINYIN_NAM),
+               family= font,
+               colour = "black", size = 2.5) + # 2.5
+  
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank()) +
+
+  # add scale
+  annotation_scale(width_hint = 0.3,  
+                   line_width = 0.5, 
+                   height = unit(0.1, "in"),
+                   # plot_unit = 'km', ### only for non-coodinate sf 
+                   # pad_x = unit(0.1, "in"), pad_y = unit(0.1, "in"),
+                   style = 'ticks',
+                   # style = 'bar',
+                   location = "bl") +
+  # coord_sf(crs = 4490) +
+  ### add north arrow
+  annotation_north_arrow(
+    location = "bl", which_north = "true", 
+    width = unit(0.3, "in"), height = unit(0.3, "in"),
+    pad_x = unit(0.15, "in"), pad_y = unit(0.2, "in"), # location in the figure
+    style = north_arrow_fancy_orienteering) +
+
+  # theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+  # scale_color_identity(breaks = seq) +
+  # scale_fill_gradientn(colours = col6, breaks = seq) ## works
+  # scale_fill_brewer(palette = 1)
+  # scale_fill_continuous(breaks = seq, )
+  scale_fill_manual('SDG Index', values=pal, limits = names(pal), labels = labels.legend) +
+  ggtitle('') +
+  theme(text=element_text(family=font, size=font_size))
+p2000
+
+
+
+
+### map 2000 + Nanhai ------------------------------------------------------------------------------
+# fname2000 <- './Figures/p2000_nanhai_2.pdf'
+
+# # Step 1: Call the pdf command to start the plot
+# pdf(file = fname2000,   # The directory you want to save the file in
+#     width  = 5,         # The width of the plot in inches
+#     height = 4)         # The height of the plot in inches
+# 
+# # Step 2: Create the plot with R code
+
+
+p2000_nolegend <- p2000 + 
+  # coord_sf(xlim = c(70, 135), clip = "off") +
+  theme(legend.position='NONE'); p2000_nolegend
+
+
+p2000_nanhai <- ggdraw() +
+  draw_plot(p2000_nolegend + 
+              theme(legend.justification = "bottom"), 
+            x= 0, y = 0, width = 1, height = 1) +
+  draw_plot(p_nanhai + 
+              theme(legend.justification = "bottom"), 
+            # x= 0.88, y = 0.041, width = 0.09, height = 0.16) ## for png
+            x= 0.83, y = 0.04, width = 0.09, height = 0.16) ## for ppt
+# for single map: x= 0.88, y = 0.08, width = 0.1, height = 0.14
+p2000_nanhai
+
+
+## Step 3: Run dev.off() to create the file
+# dev.off()
+
+# getwd()
+# save_plot(filename = './Figures/p2000_nanhai.svg', plot = p2000_nanhai)
+```
+
+
+  **Create editable plots with ggplot2**
+```{r eval=FALSE, include=FALSE}
+# library(rvg)
+# library(officer)
+# 
+# # Create a new powerpoint document
+# doc <- read_pptx()
+# doc <- add_slide(doc, 'Title and Content', 'Office Theme')
+# 
+# # Add the plot
+# doc <- ph_with_vg(doc, ggobj = p2000_nanhai, type = 'body')
+# 
+# # Write the document to a file
+# print(doc, target = "./Figures/p2000_nanhai_officer.pptx")
+
+# library(officer)
+# doc <- read_pptx()
+# doc <- add_slide(doc, "Title and Content", "Office Theme")
+# doc <- ph_with_vg(doc, code = barplot(1:5, col = 2:6), type = "body")
+# doc <- add_slide(doc, "Title and Content", "Office Theme")
+# doc <- ph_with_vg_at(doc, code = barplot(1:5, col = 2:6),
+#   left = 1, top = 2, width = 6, height = 4)
+# fileout <- tempfile(fileext = ".pptx")
+# # fileout <- "vg.pptx"
+# print(doc, target = fileout)
+
+```
+
+
+
+## map 2005
+
+```{r warning=FALSE}
+p2005 <- ggplot() + 
+  geom_sf(data = census.shp, aes(fill = SDG2005)) + theme_bw() +
+  # theme(axis.text.x = element_text(angle = 00, hjust = 1)) +
+  
+  # geom_sf_text(data = census.shp, aes(label = PINYIN_NAM), 
+  #              family= font,
+  #              colour = "black", size = 2.5) +
+  
+  theme(legend.position='NONE') +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank()) +
+  scale_fill_manual(values=pal, limits = names(pal))+
+  ggtitle('')+
+  theme(text=element_text(family=font, size=font_size))
+
+p2005
+
+p2005_nanhai <- ggdraw() +
+  draw_plot(p2005 + 
+              theme(legend.justification = "bottom"), 
+            x= 0, y = 0, width = 1, height = 1) +
+  draw_plot(p_nanhai + 
+              theme(legend.justification = "bottom"), 
+            x= 0.79, y = 0.04, width = 0.09, height = 0.16) ## for ppt
+            # x= 0.83, y = 0.041, width = 0.09, height = 0.16)
+
+# graph2ppt(x = p2005_nanhai,
+#           file="./Figures/p2005_nanhai_export.pptx",  
+#           # append=TRUE,
+#           width=7, height=5)
+```
+
+
+
+## map 2010
+```{r warning=FALSE}
+p2010 <- ggplot() + 
+  geom_sf(data = census.shp, aes(fill = SDG2010)) + theme_bw() +
+  theme(axis.text.x = element_text(angle = 00, hjust = 1)) +
+  # geom_sf_text(data = census.shp, aes(label = PINYIN_NAM), 
+  #              family= font,
+  #              colour = "black", size = 2.5) +
+  theme(legend.position='NONE') +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank()
+        # axis.text.x=element_blank(),
+        # axis.text.y=element_blank(),
+        # axis.ticks.x=element_blank(),
+        # axis.ticks.y=element_blank()
+        ) +
+  scale_fill_manual(values=pal, limits = names(pal))+
+  ggtitle('') +
+  theme(text=element_text(family=font, size=font_size))
+p2010
+
+
+p2010_nanhai <- ggdraw() +
+  draw_plot(p2010 + 
+              theme(legend.justification = "bottom"), 
+            x= 0, y = 0, width = 1, height = 1) +
+  draw_plot(p_nanhai + 
+              theme(legend.justification = "bottom"), 
+            x= 0.81, y = 0.08, width = 0.09, height = 0.16) ## for ppt
+            # x= 0.86, y = 0.083, width = 0.09, height = 0.16)
+
+# graph2ppt(x = p2010_nanhai,
+#           file="./Figures/p2010_nanhai_export.pptx",  
+#           # append=TRUE,
+#           width=7, height=5)
+```
+
+
+
+## map 2015
+
+```{r warning=FALSE}
+p2015 <- ggplot() + 
+  geom_sf(data = census.shp, aes(fill = SDG2015)) + theme_bw() +
+  theme(axis.text.x = element_text(angle = 00, hjust = 1)) +
+  # geom_sf_text(data = census.shp, aes(label = PINYIN_NAM), family= font,
+  #              colour = "black", size = 2.5) +
+  theme(legend.position='NONE') +
+  theme(axis.title.x=element_blank(),
+        axis.title.y=element_blank(),
+        # axis.text.x=element_blank(),
+        axis.text.y=element_blank(),
+        # axis.ticks.x=element_blank(),
+        axis.ticks.y=element_blank()) +
+  scale_fill_manual(values=pal, limits = names(pal))+
+  ggtitle('') +
+  theme(text=element_text(family=font, size=font_size))
+p2015
+
+
+
+p2015_nanhai <- ggdraw() +
+  draw_plot(p2015 + 
+              theme(legend.justification = "bottom"), 
+            x= 0, y = 0, width = 1, height = 1) +
+  draw_plot(p_nanhai + 
+              theme(legend.justification = "bottom"), 
+            x= 0.77, y = 0.08, width = 0.09, height = 0.16) ## for ppt
+            # x= 0.81, y = 0.083, width = 0.09, height = 0.16)
+
+# graph2ppt(x = p2015_nanhai,
+#           file="./Figures/p2015_nanhai_export.pptx",  
+#           # append=TRUE,
+#           width=7, height=5)
+```
+
+
+
+
+
+# Final plots
+
+## - get legend
+
+```{r}
+legend <- get_legend(p2000)
+p.legend <- plot_grid(legend) #+ 
+  # theme(plot.margin=grid::unit(c(0,0,0,0), "mm")) +
+  # coord_equal() + theme(aspect.ratio = 1) +
+  # theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+width_legend <- 0.9
+getwd()
+
+
+graph2ppt(x = p.legend, 
+          file="./Figures/p.legend_export.pptx",
+          # append=TRUE,
+          width=1, height=4)
+
+
+# ### png
+# p.legend_fname = './Figures/p_legend.png'
+# save_plot(filename = p.legend_fname, 
+#           plot = p.legend, 
+#           # ncol = 1,
+#           # nrow = 1,
+#           # base_width = width_legend, base_height = 3.2, 
+#           base_aspect_ratio = 1)
+# 
+# library(magick)
+# frink <- image_read(p.legend_fname)
+# p.legend_trim <- image_trim(frink)
+# p.legend_trim
+# p.legend_trim_file <- './Figures/p_legend_trim.png'
+# image_write(image = p.legend_trim, path = p.legend_trim_file,
+#             quality = 100, density = 300)
+# 
+# info <- image_info(p.legend_trim) %>% as.data.frame()
+# # width_legend <- info$width /25.4 * 0.8 ## mm to in
+# # width_legend
+
+```
+
+
+## - combine plots
+### - 4 plots (no legend)
+```{r warning=FALSE}
+p4_noLegend <- plot_grid(
+  p2000_nanhai,
+  p2005_nanhai,
+  p2010_nanhai,
+  p2015_nanhai,
+  labels="auto",
+  # labels = c('(A) 2000', '(B) 2005', '(C) 2010', '(D) 2015'),
+  ncol = 2, nrow = 2, axis = 'tblr', align="v",
+  scale = c(1, 1, 1.05, 1.05))## for ppt
+  # scale = c(1, 1, 1.05, 1.05))## for png
+
+
+temp  <- format(Sys.time(), '%Y_%m_%d_%H'); temp
+fname <- paste0(dir.fig, '/Fig.2_map_noLegend_', temp, '.png'); fname
+
+### ppt
+# graph2ppt(x = p4_noLegend,
+#           file="./Figures/Figure 2_noLegend_export_1105.pptx",  
+#           # append=TRUE,
+#           width=8, height=6)
+
+
+# ### png
+# w_each = 3.2
+# save_plot(filename = fname,
+#           plot = p4_noLegend, 
+#           ncol = 2,
+#           nrow = 2,
+#           base_width = w_each, base_height = 3*w_each/3.5)#, 3.5, 3
+#           # base_aspect_ratio = 1)
+
+```
+
+
+
+### - combine all (in gridE)
+```{r eval=FALSE, warning=FALSE, include=FALSE}
+
+
+p1 <- ggdraw() + draw_image(fname, scale = 1)
+p2 <- ggdraw() + draw_image(p.legend_trim_file, scale = 0.8)
+### create a blank plot to be saved 
+temp <- format(Sys.time(), '%Y_%m_%d_%H'); temp
+fname <- paste0(dir.fig, '/Fig.2_map_FINAL_', temp, '.pdf'); fname
+# png(filename = fname, 
+#     width = 7+width_legend, height = 6, units = 'in', res = 600)
+pdf(file = fname,
+    paper = 'letter', ## 'letter', 'a4'
+    width = w_each*2 +width_legend, height = 6)
+
+
+grid.newpage()  # new draw page
+# layout_1 <- grid.layout(nrow = 2, ncol = 2, 
+#                         widths = c(7, width_legend), heights = c(3, 3))  
+layout_1 <- grid.layout(nrow = 2, ncol = 2, 
+                        widths = c(w_each*2, width_legend), 
+                        heights = c(3, 3))  
+pushViewport(viewport(layout = layout_1)) 
+
+print(p1, vp = viewport(layout.pos.row = 1:2, layout.pos.col = 1)) 
+# one plot can occupy several rows or cols
+print(p2, vp = viewport(layout.pos.row = 2, layout.pos.col = 2))  # 
+
+dev.off()
+```
+
+
+
+

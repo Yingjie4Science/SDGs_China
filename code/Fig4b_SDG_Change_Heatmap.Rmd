@@ -1,0 +1,140 @@
+---
+title: "SDG_China"
+author: "Yingjie"
+date: "January 27, 2019"
+output: pdf_document
+editor_options: 
+  chunk_output_type: console
+---
+
+
+
+# Set up
+
+## path and packages
+```{r}
+knitr::opts_chunk$set(echo = TRUE)
+
+# To clear your environment 
+remove(list = ls())
+
+path <- rstudioapi::getSourceEditorContext()$path
+dir  <- dirname(rstudioapi::getSourceEditorContext()$path); dir
+setwd(dir)
+setwd('../')
+getwd()
+
+dir.fig <- './Figures'
+getwd()
+
+
+## data manipulation 
+library(readxl)
+library(tidyverse)
+library(dplyr)
+
+## spatial 
+library(sf) # much faster than rgdal
+# require(geoR)
+
+## plot
+library(cowplot)
+library(lattice)
+
+## other
+library(extrafont) ## font
+# library(export) # to easily export active R graphs in publication quality to Microsoft Office
+## https://github.com/tomwenseleers/export/issues/43
+
+# font_import()
+font <- "Arial" ## "Times" ## "serif"
+```
+
+
+
+# Data
+```{r}
+# ----- read data ------
+list.files()
+library(readxl)
+SDG.name <- as.data.frame(
+      read_excel(path = './data/_SDG_names_id.xlsx', sheet = 1, col_names = F ))
+
+
+
+chg.df <- as.data.frame(
+  read.csv("./data/Figure 4b.csv"))
+names(chg.df) <- SDG.name[1,]
+
+chg.df[,2:19] = apply(chg.df[,2:19], 2, function(x) as.numeric(as.character(x)));
+str(chg.df)
+
+df_matrix = as.matrix(chg.df)
+df_matrix
+df_matrix_num <- df_matrix[1:31,2:19]; df_matrix_num
+dim(df_matrix_num)
+```
+
+
+
+# Plot
+```{r}
+y1 <- lapply(1:1, function(x) matrix(df_matrix_num, 31, 18,
+                                     dimnames=list(paste(chg.df[1:31,1],sep=""),
+                                                   paste(paste(colnames(chg.df)[2:19],sep="")))))
+
+
+Lab.palette1 <- colorRampPalette(c(rgb(202/255,0,32/255),
+                                   rgb(244/255,165/255,130/255),
+                                   rgb(247/255,247/255,247/255),rgb(166/255,217/255,106/255), 
+                                   rgb(26/255,150/255,65/255)),space = "Lab")
+
+
+# y1[[1]]
+
+outdir <-'./Figures'
+fname <- paste0(outdir,"/Fig4b.png"); fname
+png(filename= fname,
+    units="in",
+    width=9,
+    height=5,
+    pointsize=8,
+    res=600)
+
+
+
+levelplot(y1[[1]], 
+          col.regions=Lab.palette1, 
+          main="", 
+          at=c(-100,-70,-60,-50,-40,-30,-20,-10,0,10,20,30,40,50,60,70,100), # -80, 80
+          scales=list(y=list(rot=0), x=list(rot=90)),
+          xlab="", ylab="",
+          
+          # scales=list(y=list(rot=0, cex=.5), x=list(rot=90, cex=.5)),
+
+          # scales=list(log="e",x=list(cex=.3),y=list(cex=.3)), ## change font size
+          
+          par.settings=list(axis.text=list(fontfamily=font),
+                            par.xlab.text=list(fontfamily=font),
+                            par.ylab.text=list(fontfamily=font),
+                            par.main.text=list(fontfamily=font),
+                            par.sub.text=list(fontfamily=font)))
+
+
+dev.off()
+
+
+
+## or save to PPT ----------------------------------------------------------------------------------
+
+# library(export)
+# graph2ppt(#x = p2005_nanhai,
+#           file=fname,  
+#           # append=TRUE,
+#           width=10, height=8) ## 10,8
+
+
+```
+
+
+
